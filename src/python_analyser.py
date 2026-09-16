@@ -39,3 +39,28 @@ def extract_top_level_functions(
             entities.append(entity)
 
     return entities
+
+
+def extract_top_level_classes(
+    tree: ast.Module, relative_path: Path, file_id: int, allocator: EntityIdAllocator
+) -> list[CodeEntity]:
+    entities = []
+
+    # Iterating source files tree structure for classes
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            location = SourceLocation(
+                path=relative_path.as_posix(),
+                start_line=node.lineno,
+                end_line=node.end_lineno,
+            )
+            entity = CodeEntity(
+                id=allocator.allocate(),
+                name=node.name,
+                entity_type=EntityType.CLASS,
+                location=location,
+                parent_id=file_id,
+            )
+            entities.append(entity)
+
+    return entities
