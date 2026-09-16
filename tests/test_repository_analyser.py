@@ -23,7 +23,7 @@ class RepositoryAnalyserTests(unittest.TestCase):
             result = analyse_python_repository(root)
 
             # Extract both files and all three declared symbols.
-            self.assertEqual(len(result), 5)
+            self.assertEqual(len(result), 6)
             files = [
                 entity for entity in result if entity.entity_type == EntityType.FILE
             ]
@@ -75,3 +75,94 @@ class RepositoryAnalyserTests(unittest.TestCase):
                 method.location,
                 SourceLocation("package/second.py", 2, 3),
             )
+
+    def test_creates_nested_folders_and_reuses_shared_parent(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package/services").mkdir(parents=True)
+            (root / "package/services/first.py").touch()
+            (root / "package/services/second.py").touch()
+
+            result = analyse_python_repository(root)
+
+            # Create two folders and two files, without duplicate folders.
+            self.assertEqual(len(result), 4)
+            folders = {
+                entity.location.path: entity
+                for entity in result
+                if entity.entity_type == EntityType.FOLDER
+            }
+            self.assertEqual(set(folders), {"package", "package/services"})
+
+            # The outer folder has no parent; the inner folder belongs to it.
+            package = folders["package"]
+            services = folders["package/services"]
+            self.assertIsNone(package.parent_id)
+            self.assertEqual(services.parent_id, package.id)
+
+            # Folder locations preserve relative paths without source line ranges.
+            self.assertEqual(package.location, SourceLocation("package"))
+            self.assertEqual(services.location, SourceLocation("package/services"))
+
+            # Both files should reuse the same immediate parent folder.
+            files = [
+                entity for entity in result if entity.entity_type == EntityType.FILE
+            ]
+            self.assertEqual(len(files), 2)
+            for file_entity in files:
+                self.assertEqual(file_entity.parent_id, services.id)
+
+            # Folders and files should all have distinct IDs.
+            self.assertEqual(len({entity.id for entity in result}), 4)
+
+
+if __name__ == "__main__":
+    root = Path("C:/dev/repos/PythonTranslator")
+    entities = analyse_python_repository(root)
+
+    print(f"\nRepository: {root}")
+    print(f"Total entities: {len(entities)}")
+
+    # Summarize each supported entity category.
+    for kind in EntityType:
+        count = sum(entity.entity_type == kind for entity in entities)
+        print(f"  {kind.value}: {count}")
+
+    print("\nHierarchy")
+    print("=" * 80)
+
+    # Group entities by parent so each appears beneath its container.
+    children = {}
+    for entity in entities:
+        children.setdefault(entity.parent_id, []).append(entity)
+
+    def print_children(parent_id, depth=0):
+        siblings = sorted(
+            children.get(parent_id, []),
+            key=lambda entity: (
+                entity.location.path,
+                entity.location.start_line or 0,
+                entity.id,
+            ),
+        )
+
+        for entity in siblings:
+            indent = "    " * depth
+            location = entity.location
+            lines = (
+                f"{location.start_line}–{location.end_line}"
+                if location.start_line is not None
+                else "not applicable"
+            )
+
+            print(f"{indent}[{entity.entity_type.value.upper()}] {entity.name}")
+            print(f"{indent}  ID: {entity.id} | Parent: {entity.parent_id}")
+            print(f"{indent}  Path: {location.path} | Lines: {lines}")
+            print()
+
+            print_children(entity.id, depth + 1)
+
+    print_children(None)
+
+    if not entities:
+        print("No supported Python files found.")
