@@ -7,6 +7,7 @@ from src.code_entities import EntityType, SourceLocation
 from src.entity_ids import EntityIdAllocator
 from src.python_analyser import (
     extract_classes_and_methods,
+    extract_imports,
     extract_top_level_functions,
     parse_python_file,
 )
@@ -189,3 +190,77 @@ def test_excludes_nested_definitions_from_direct_methods(self):
 
     # The direct method should belong to Outer, not the file.
     self.assertEqual(result[1].parent_id, result[0].id)
+
+
+def test_extracts_ordinary_imports_with_aliases_and_nested_imports(self):
+    tree = ast.parse("import os, pathlib as paths\n\ndef load():\n    import json\n")
+    file_id = 1
+    result = extract_imports(tree, Path("example.py"), file_id)
+
+    # Extract each imported module, including the import inside the function.
+    self.assertEqual(len(result), 3)
+    references = {reference.module: reference for reference in result}
+    self.assertEqual(set(references), {"os", "pathlib", "json"})
+
+    # Preserve explicit aliases and leave unaliased imports as None.
+    self.assertIsNone(references["os"].alias)
+    self.assertEqual(references["pathlib"].alias, "paths")
+    self.assertIsNone(references["json"].alias)
+
+    # Ordinary imports belong to the file and have no from-import name.
+    for reference in result:
+        self.assertEqual(reference.source_file_id, file_id)
+        self.assertIsNone(reference.imported_name)
+        self.assertEqual(reference.level, 0)
+
+    # Names in the same import statement share its source location.
+    self.assertEqual(references["os"].location, SourceLocation("example.py", 1, 1))
+    self.assertEqual(references["pathlib"].location, SourceLocation("example.py", 1, 1))
+
+    # The nested import retains its own source location.
+    self.assertEqual(references["json"].location, SourceLocation("example.py", 4, 4))
+
+
+def test_extracts_from_imports(self):
+    tree = ast.parse(
+        "from pathlib import Path, PurePath as Pure\n"
+        "from ..helpers import clean as tidy\n"
+        "from . import tools\n"
+    )
+    file_id = 1
+    result = extract_imports(tree, Path("example.py"), file_id)
+
+    # Extract one reference per imported name.
+    self.assertEqual(len(result), 4)
+    references = {
+        (reference.module, reference.imported_name): reference for reference in result
+    }
+    self.assertEqual(
+        set(references),
+        {
+            ("pathlib", "Path"),
+            ("pathlib", "PurePath"),
+            ("helpers", "clean"),
+            (None, "tools"),
+        },
+    )
+
+    # Preserve aliases and distinguish absolute from relative imports.
+    expected = [
+        ("pathlib", "Path", None, 0, 1),
+        ("pathlib", "PurePath", "Pure", 0, 1),
+        ("helpers", "clean", "tidy", 2, 2),
+        (None, "tools", None, 1, 3),
+    ]
+    for module, name, alias, level, line in expected:
+        with self.subTest(module=module, name=name):
+            reference = references[(module, name)]
+            self.assertEqual(reference.alias, alias)
+            self.assertEqual(reference.level, level)
+
+            # Each reference should retain its containing file and source range.
+            self.assertEqual(reference.source_file_id, file_id)
+            self.assertEqual(
+                reference.location,
+                SourceLocation("example.py", line, line),
+            )

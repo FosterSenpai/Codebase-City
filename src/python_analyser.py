@@ -5,6 +5,7 @@ from pathlib import Path
 
 from src.code_entities import CodeEntity, EntityType, SourceLocation
 from src.entity_ids import EntityIdAllocator
+from src.import_references import ImportReference
 
 
 def parse_python_file(root: Path, relative_path: Path) -> ast.Module:
@@ -83,3 +84,50 @@ def extract_classes_and_methods(
                     entities.append(method_entity)
 
     return entities
+
+
+def extract_imports(
+    tree: ast.Module,
+    relative_path: Path,
+    file_id: int,
+) -> list[ImportReference]:
+    imports = []
+
+    for node in ast.walk(tree):
+        # Normal imports
+        if isinstance(node, ast.Import):
+            location = SourceLocation(
+                path=relative_path.as_posix(),
+                start_line=node.lineno,
+                end_line=node.end_lineno,
+            )
+            for imported in node.names:
+                import_reference = ImportReference(
+                    source_file_id=file_id,
+                    module=imported.name,
+                    imported_name=None,
+                    alias=imported.asname,
+                    level=0,
+                    location=location,
+                )
+                imports.append(import_reference)
+
+        # Import from
+        elif isinstance(node, ast.ImportFrom):
+            location = SourceLocation(
+                path=relative_path.as_posix(),
+                start_line=node.lineno,
+                end_line=node.end_lineno,
+            )
+            for imported in node.names:
+                import_reference = ImportReference(
+                    source_file_id=file_id,
+                    module=node.module,
+                    imported_name=imported.name,
+                    alias=imported.asname,
+                    level=node.level,
+                    location=location,
+                )
+                imports.append(import_reference)
+
+    return imports
