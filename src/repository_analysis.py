@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from src.code_entities import CodeEntity
+from src.file_connections import FileConnection
 from src.import_references import ResolvedImport
 
 
@@ -8,3 +9,4 @@ from src.import_references import ResolvedImport
 class RepositoryAnalysis:
     entities: list[CodeEntity]
     imports: list[ResolvedImport]
+    connections: list[FileConnection]
