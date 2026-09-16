@@ -72,3 +72,18 @@ class RepositoryScannerTests(unittest.TestCase):
 
             with self.assertRaises(NotADirectoryError):
                 discover_python_files(root / "keep.py")
+
+    def test_custom_exclusions(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            # Temp setup
+            (root / "package").mkdir()
+            (root / "package/keep.py").touch()
+            (root / "package/.venv").mkdir()
+            (root / "package/.venv/hidden.py").touch()
+            (root / "package/hide").mkdir()
+            (root / "package/hide/hidden.py").touch()
+
+            discovered = discover_python_files(root, {"hide"})
+            self.assertEqual(discovered, [Path("package/keep.py")])

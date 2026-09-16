@@ -3,20 +3,24 @@ import os
 from pathlib import Path
 
 
-def discover_python_files(root: Path) -> list[Path]:
+def discover_python_files(
+    root: Path, excluded_dirs: set[str] | None = None
+) -> list[Path]:
     if not root.exists():
         raise FileNotFoundError(root)
     if not root.is_dir():
         raise NotADirectoryError(root)
 
     # Exclusions
-    excluded_dirs = {".git", "__pycache__", ".venv", "venv", "env"}
+    exclusions = {".git", "__pycache__", ".venv", "venv", "env"}
+    if excluded_dirs:
+        exclusions.update(excluded_dirs)
 
     # Discovery
     discovered_files = []
     for file_root, dirnames, files in os.walk(root):
         dirnames[:] = [
-            name for name in dirnames if name not in excluded_dirs
+            name for name in dirnames if name not in exclusions
         ]  # Skip exlusions
 
         for filename in files:
