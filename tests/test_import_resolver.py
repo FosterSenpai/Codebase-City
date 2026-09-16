@@ -130,7 +130,6 @@ class ModuleIndexTests(unittest.TestCase):
 
     def test_unsupported_import_forms_remain_unresolved(self):
         cases = [
-            ("package", "helpers", 0),
             ("package", None, 1),
             (None, None, 0),
         ]
@@ -148,3 +147,46 @@ class ModuleIndexTests(unittest.TestCase):
 
                 # Forms outside the current resolver's scope return None.
                 self.assertIsNone(resolve_import_target(reference, {"package": 7}))
+
+    def test_resolves_absolute_from_import_candidates(self):
+        cases = [
+            ("module only", {"package": 7}, 7),
+            ("submodule only", {"package.helpers": 8}, 8),
+            ("both candidates", {"package": 7, "package.helpers": 8}, None),
+            ("neither candidate", {}, None),
+        ]
+
+        for label, module_index, expected in cases:
+            with self.subTest(case=label):
+                reference = ImportReference(
+                    source_file_id=1,
+                    module="package",
+                    imported_name="helpers",
+                    alias="tools",
+                    level=0,
+                    location=SourceLocation("main.py", 1, 1),
+                )
+
+                result = resolve_import_target(reference, module_index)
+
+                # Resolve a single candidate; leave ambiguous or missing targets unresolved.
+                self.assertEqual(result, expected)
+
+    def test_wildcard_import_targets_module_only(self):
+        reference = ImportReference(
+            source_file_id=1,
+            module="package",
+            imported_name="*",
+            alias=None,
+            level=0,
+            location=SourceLocation("main.py", 1, 1),
+        )
+
+        # A wildcard should resolve to the module itself.
+        self.assertEqual(
+            resolve_import_target(reference, {"package": 7}),
+            7,
+        )
+
+        # A fabricated submodule named "*" must not be considered a target.
+        self.assertIsNone(resolve_import_target(reference, {"package.*": 8}))
