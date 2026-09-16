@@ -129,7 +129,9 @@ class RepositoryAnalyserTests(unittest.TestCase):
 
             # Both files should contribute an import reference.
             self.assertEqual(len(analysis.imports), 2)
-            references = {reference.module: reference for reference in analysis.imports}
+            references = {
+                item.reference.module: item.reference for item in analysis.imports
+            }
             self.assertEqual(set(references), {"os", "pathlib"})
 
             files = {
@@ -155,6 +157,48 @@ class RepositoryAnalyserTests(unittest.TestCase):
             self.assertEqual(
                 references["pathlib"].location,
                 SourceLocation("second.py", 1, 1),
+            )
+
+    def test_resolves_later_file_and_preserves_unresolved_imports(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.py").write_text(
+                "import z\nimport missing_dependency\n",
+                encoding="utf-8",
+            )
+            (root / "z.py").touch()
+
+            analysis = analyse_python_repository(root)
+
+            files = {
+                entity.location.path: entity
+                for entity in analysis.entities
+                if entity.entity_type == EntityType.FILE
+            }
+
+            # Keep both matched and unmatched import references.
+            self.assertEqual(len(analysis.imports), 2)
+            imports = {item.reference.module: item for item in analysis.imports}
+            self.assertEqual(set(imports), {"z", "missing_dependency"})
+
+            # Resolve a target discovered after the importing file.
+            self.assertEqual(imports["z"].target_file_id, files["z.py"].id)
+
+            # Unmatched imports remain present without an invented destination.
+            self.assertIsNone(imports["missing_dependency"].target_file_id)
+
+            # Both references retain their actual source file.
+            for item in analysis.imports:
+                self.assertEqual(item.reference.source_file_id, files["a.py"].id)
+
+            # Original import evidence survives resolution.
+            self.assertEqual(
+                imports["z"].reference.location,
+                SourceLocation("a.py", 1, 1),
+            )
+            self.assertEqual(
+                imports["missing_dependency"].reference.location,
+                SourceLocation("a.py", 2, 2),
             )
 
 
@@ -221,30 +265,40 @@ if __name__ == "__main__":
     if not entities:
         print("No supported Python files found.")
 
-    # Sort import references by file and source line.
+    # Look up resolved destination files by entity ID.
+    entities_by_id = {entity.id: entity for entity in entities}
+
+    # Sort using the original reference stored inside each resolution result.
     sorted_imports = sorted(
         analysis.imports,
-        key=lambda reference: (
-            reference.location.path,
-            reference.location.start_line or 0,
+        key=lambda item: (
+            item.reference.location.path,
+            item.reference.location.start_line or 0,
         ),
     )
 
+    resolved_count = sum(item.target_file_id is not None for item in sorted_imports)
+    unresolved_count = len(sorted_imports) - resolved_count
+
     print("\n" + "=" * 80)
-    print("IMPORT REFERENCES — DESTINATIONS NOT YET RESOLVED")
+    print("IMPORT RESOLUTION")
     print("=" * 80)
+    print(f"Resolved:   {resolved_count}")
+    print(f"Unresolved: {unresolved_count}")
 
     current_file_id = None
 
-    for reference in sorted_imports:
-        # Print a heading when moving to a different source file.
+    for item in sorted_imports:
+        reference = item.reference
+
+        # Group imports beneath their source file.
         if reference.source_file_id != current_file_id:
             current_file_id = reference.source_file_id
             print(f"\n[FILE] {reference.location.path}")
             print(f"  Entity ID: {current_file_id}")
             print("-" * 80)
 
-        # Reconstruct a readable declaration for each individual reference.
+        # Reconstruct a readable declaration for this reference.
         if reference.imported_name is None:
             declaration = f"import {reference.module}"
         else:
@@ -254,14 +308,25 @@ if __name__ == "__main__":
         if reference.alias is not None:
             declaration += f" as {reference.alias}"
 
-        print(f"  {declaration}")
+        status = "RESOLVED" if item.target_file_id is not None else "UNRESOLVED"
+        print(f"  [{status}] {declaration}")
+
+        # Show the matched destination without labelling unmatched imports external.
+        if item.target_file_id is not None:
+            target = entities_by_id[item.target_file_id]
+            print(f"    Target file:    {target.location.path}")
+            print(f"    Target ID:      {target.id}")
+        else:
+            print("    Target file:    No unambiguous local match")
+
+        # Preserve the source evidence alongside the resolution result.
         print(
-            f"    Lines:         {reference.location.start_line}"
+            f"    Source lines:   {reference.location.start_line}"
             f"–{reference.location.end_line}"
         )
-        print(f"    Module:        {reference.module!r}")
-        print(f"    Imported name: {reference.imported_name!r}")
-        print(f"    Alias:         {reference.alias!r}")
+        print(f"    Module:         {reference.module!r}")
+        print(f"    Imported name:  {reference.imported_name!r}")
+        print(f"    Alias:          {reference.alias!r}")
         print(f"    Relative level: {reference.level}")
         print()
 

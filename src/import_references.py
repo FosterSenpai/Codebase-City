@@ -13,3 +13,9 @@ class ImportReference:
     alias: str | None
     level: int
     location: SourceLocation
+
+
+@dataclass
+class ResolvedImport:
+    reference: ImportReference
+    target_file_id: int | None

@@ -2,6 +2,8 @@ from pathlib import Path
 
 from src.code_entities import CodeEntity, EntityType, SourceLocation
 from src.entity_ids import EntityIdAllocator
+from src.import_references import ResolvedImport
+from src.import_resolver import build_module_index, resolve_import_target
 from src.python_analyser import (
     extract_classes_and_methods,
     extract_imports,
@@ -44,7 +46,18 @@ def analyse_python_repository(root: Path) -> RepositoryAnalysis:
         )
         imports.extend(extract_imports(tree, relative_path, file_entity.id))
 
-    return RepositoryAnalysis(entities=entities, imports=imports)
+    module_index = build_module_index(entities)
+
+    # resolve each reference against module index
+    resolved_imports = []
+    for reference in imports:
+        resolved_import = ResolvedImport(
+            reference=reference,
+            target_file_id=resolve_import_target(reference, module_index),
+        )
+        resolved_imports.append(resolved_import)
+
+    return RepositoryAnalysis(entities=entities, imports=resolved_imports)
 
 
 def _get_or_create_folder_id(
