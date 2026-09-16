@@ -4,6 +4,11 @@ from pathlib import Path
 
 
 def discover_python_files(root: Path) -> list[Path]:
+    if not root.exists():
+        raise FileNotFoundError(root)
+    if not root.is_dir():
+        raise NotADirectoryError(root)
+
     # Exclusions
     excluded_dirs = {".git", "__pycache__", ".venv", "venv", "env"}
 

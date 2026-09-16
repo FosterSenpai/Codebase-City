@@ -57,3 +57,18 @@ class RepositoryScannerTests(unittest.TestCase):
 
             discovered = discover_python_files(root)
             self.assertEqual(discovered, [Path("package/keep.py")])
+
+    def test_non_existant_directory_raises_FileNotFoundError(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            with self.assertRaises(FileNotFoundError):
+                discover_python_files(root / "nonexistent")
+
+    def test_non_directory_raises_NotADirectoryError(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "keep.py").touch()
+
+            with self.assertRaises(NotADirectoryError):
+                discover_python_files(root / "keep.py")
