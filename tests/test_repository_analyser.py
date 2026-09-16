@@ -227,6 +227,30 @@ class RepositoryAnalyserTests(unittest.TestCase):
             }
             self.assertNotIn(files["observer.py"].id, cycle_members)
 
+    def test_unchanged_repository_produces_identical_analysis(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "package").mkdir()
+            (root / "package/first.py").write_text(
+                "from .second import Second\n\ndef run():\n    pass\n",
+                encoding="utf-8",
+            )
+            (root / "package/second.py").write_text(
+                "from .first import run\n"
+                "\n"
+                "class Second:\n"
+                "    def execute(self):\n"
+                "        pass\n",
+                encoding="utf-8",
+            )
+
+            first = analyse_python_repository(root)
+            second = analyse_python_repository(root)
+
+            # Unchanged input should reproduce entities, IDs, references,
+            # connections, and circular groups in the same order.
+            self.assertEqual(first, second)
+
 
 if __name__ == "__main__":
     root = Path("C:/dev/repos/PythonTranslator")
