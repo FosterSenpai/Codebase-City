@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from src.code_entities import EntityType, SourceLocation
 from src.entity_ids import EntityIdAllocator
 from src.python_analyser import (
-    extract_top_level_classes,
+    extract_classes_and_methods,
     extract_top_level_functions,
     parse_python_file,
 )
@@ -106,23 +106,86 @@ class PythonAnalyserTests(unittest.TestCase):
         # excluding nested functions and class methods.
         self.assertEqual([function.name for function in functions], ["outer", "fetch"])
 
-    def test_extracts_top_level_class_entity(self):
-        tree = ast.parse("class Greeter:\n    pass\n")
-        allocator = EntityIdAllocator()
-        file_id = allocator.allocate()
-        result = extract_top_level_classes(tree, Path("example.py"), file_id, allocator)
 
-        # Exactly one class should be extracted.
-        self.assertEqual(len(result), 1)
-        entity = result[0]
+def test_extracts_classes_and_methods_with_correct_parents(self):
+    tree = ast.parse(
+        "class First:\n"
+        "    def run(self):\n"
+        "        pass\n"
+        "\n"
+        "class Second:\n"
+        "    async def run(self):\n"
+        "        pass\n"
+    )
+    allocator = EntityIdAllocator()
+    file_id = allocator.allocate()
+    result = extract_classes_and_methods(tree, Path("example.py"), file_id, allocator)
 
-        # The entity should preserve the class name and identify it as a class.
-        self.assertEqual(entity.name, "Greeter")
-        self.assertEqual(entity.entity_type, EntityType.CLASS)
+    # Both classes and their methods should be extracted in source order.
+    self.assertEqual(len(result), 4)
+    self.assertEqual(
+        [entity.name for entity in result],
+        ["First", "run", "Second", "run"],
+    )
+    first_class, first_method, second_class, second_method = result
 
-        # The class should belong to the file and have its own distinct ID.
-        self.assertEqual(entity.parent_id, file_id)
-        self.assertNotEqual(entity.id, file_id)
+    # Ordinary and async methods should both be identified as methods.
+    self.assertEqual(
+        [entity.entity_type for entity in result],
+        [
+            EntityType.CLASS,
+            EntityType.METHOD,
+            EntityType.CLASS,
+            EntityType.METHOD,
+        ],
+    )
 
-        # The source location should identify the file and inclusive class line range.
-        self.assertEqual(entity.location, SourceLocation("example.py", 1, 2))
+    # Both classes should belong to the containing file.
+    self.assertEqual(first_class.parent_id, file_id)
+    self.assertEqual(second_class.parent_id, file_id)
+
+    # Each same-named method should belong to its own class.
+    self.assertEqual(first_method.parent_id, first_class.id)
+    self.assertEqual(second_method.parent_id, second_class.id)
+
+    # Every extracted entity should have a unique ID distinct from the file ID.
+    entity_ids = [entity.id for entity in result]
+    self.assertEqual(len(set(entity_ids)), 4)
+    self.assertNotIn(file_id, entity_ids)
+
+    # Class source ranges should include their method definitions.
+    self.assertEqual(first_class.location, SourceLocation("example.py", 1, 3))
+    self.assertEqual(second_class.location, SourceLocation("example.py", 5, 7))
+
+    # Each method should retain its own inclusive source line range.
+    self.assertEqual(first_method.location, SourceLocation("example.py", 2, 3))
+    self.assertEqual(second_method.location, SourceLocation("example.py", 6, 7))
+
+
+def test_excludes_nested_definitions_from_direct_methods(self):
+    tree = ast.parse(
+        "class Outer:\n"
+        "    def run(self):\n"
+        "        def helper():\n"
+        "            pass\n"
+        "\n"
+        "    class Nested:\n"
+        "        def inner_method(self):\n"
+        "            pass\n"
+    )
+    allocator = EntityIdAllocator()
+    file_id = allocator.allocate()
+    result = extract_classes_and_methods(tree, Path("example.py"), file_id, allocator)
+
+    # Extract only the top-level class and its direct method.
+    self.assertEqual(
+        [entity.name for entity in result],
+        ["Outer", "run"],
+    )
+    self.assertEqual(
+        [entity.entity_type for entity in result],
+        [EntityType.CLASS, EntityType.METHOD],
+    )
+
+    # The direct method should belong to Outer, not the file.
+    self.assertEqual(result[1].parent_id, result[0].id)
