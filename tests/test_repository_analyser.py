@@ -20,9 +20,10 @@ class RepositoryAnalyserTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = analyse_python_repository(root)
+            analysis = analyse_python_repository(root)
+            result = analysis.entities
 
-            # Extract both files and all three declared symbols.
+            # Extract two files, one folder, and three symbols.
             self.assertEqual(len(result), 6)
             files = [
                 entity for entity in result if entity.entity_type == EntityType.FILE
@@ -83,7 +84,8 @@ class RepositoryAnalyserTests(unittest.TestCase):
             (root / "package/services/first.py").touch()
             (root / "package/services/second.py").touch()
 
-            result = analyse_python_repository(root)
+            analysis = analyse_python_repository(root)
+            result = analysis.entities
 
             # Create two folders and two files, without duplicate folders.
             self.assertEqual(len(result), 4)
@@ -115,23 +117,66 @@ class RepositoryAnalyserTests(unittest.TestCase):
             # Folders and files should all have distinct IDs.
             self.assertEqual(len({entity.id for entity in result}), 4)
 
+    def test_collects_imports_with_correct_source_files(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "first.py").write_text("import os\n", encoding="utf-8")
+            (root / "second.py").write_text(
+                "from pathlib import Path\n", encoding="utf-8"
+            )
+
+            analysis = analyse_python_repository(root)
+
+            # Both files should contribute an import reference.
+            self.assertEqual(len(analysis.imports), 2)
+            references = {reference.module: reference for reference in analysis.imports}
+            self.assertEqual(set(references), {"os", "pathlib"})
+
+            files = {
+                entity.location.path: entity
+                for entity in analysis.entities
+                if entity.entity_type == EntityType.FILE
+            }
+
+            # Each import should reference the entity for its containing file.
+            self.assertEqual(references["os"].source_file_id, files["first.py"].id)
+            self.assertEqual(
+                references["pathlib"].source_file_id, files["second.py"].id
+            )
+
+            # Preserve ordinary and from-import details through repository analysis.
+            self.assertIsNone(references["os"].imported_name)
+            self.assertEqual(references["pathlib"].imported_name, "Path")
+
+            # Import locations should remain relative to the repository root.
+            self.assertEqual(
+                references["os"].location, SourceLocation("first.py", 1, 1)
+            )
+            self.assertEqual(
+                references["pathlib"].location,
+                SourceLocation("second.py", 1, 1),
+            )
+
 
 if __name__ == "__main__":
     root = Path("C:/dev/repos/PythonTranslator")
-    entities = analyse_python_repository(root)
+    analysis = analyse_python_repository(root)
+    entities = analysis.entities
 
-    print(f"\nRepository: {root}")
-    print(f"Total entities: {len(entities)}")
+    print("\n" + "=" * 80)
+    print("REPOSITORY ANALYSIS")
+    print("=" * 80)
+    print(f"Repository: {root}")
+    print(f"Entities:   {len(entities)}")
+    print(f"Imports:    {len(analysis.imports)}")
 
     # Summarize each supported entity category.
+    print("\nEntity counts:")
     for kind in EntityType:
         count = sum(entity.entity_type == kind for entity in entities)
-        print(f"  {kind.value}: {count}")
+        print(f"  {kind.value:<10} {count}")
 
-    print("\nHierarchy")
-    print("=" * 80)
-
-    # Group entities by parent so each appears beneath its container.
+    # Group entities by parent to display their containment hierarchy.
     children = {}
     for entity in entities:
         children.setdefault(entity.parent_id, []).append(entity)
@@ -154,15 +199,73 @@ if __name__ == "__main__":
                 if location.start_line is not None
                 else "not applicable"
             )
+            parent = (
+                str(entity.parent_id)
+                if entity.parent_id is not None
+                else "None (repository root)"
+            )
 
             print(f"{indent}[{entity.entity_type.value.upper()}] {entity.name}")
-            print(f"{indent}  ID: {entity.id} | Parent: {entity.parent_id}")
+            print(f"{indent}  ID: {entity.id} | Parent: {parent}")
             print(f"{indent}  Path: {location.path} | Lines: {lines}")
             print()
 
             print_children(entity.id, depth + 1)
 
+    print("\n" + "=" * 80)
+    print("ENTITY HIERARCHY")
+    print("=" * 80)
+
     print_children(None)
 
     if not entities:
         print("No supported Python files found.")
+
+    # Sort import references by file and source line.
+    sorted_imports = sorted(
+        analysis.imports,
+        key=lambda reference: (
+            reference.location.path,
+            reference.location.start_line or 0,
+        ),
+    )
+
+    print("\n" + "=" * 80)
+    print("IMPORT REFERENCES — DESTINATIONS NOT YET RESOLVED")
+    print("=" * 80)
+
+    current_file_id = None
+
+    for reference in sorted_imports:
+        # Print a heading when moving to a different source file.
+        if reference.source_file_id != current_file_id:
+            current_file_id = reference.source_file_id
+            print(f"\n[FILE] {reference.location.path}")
+            print(f"  Entity ID: {current_file_id}")
+            print("-" * 80)
+
+        # Reconstruct a readable declaration for each individual reference.
+        if reference.imported_name is None:
+            declaration = f"import {reference.module}"
+        else:
+            module = "." * reference.level + (reference.module or "")
+            declaration = f"from {module} import {reference.imported_name}"
+
+        if reference.alias is not None:
+            declaration += f" as {reference.alias}"
+
+        print(f"  {declaration}")
+        print(
+            f"    Lines:         {reference.location.start_line}"
+            f"–{reference.location.end_line}"
+        )
+        print(f"    Module:        {reference.module!r}")
+        print(f"    Imported name: {reference.imported_name!r}")
+        print(f"    Alias:         {reference.alias!r}")
+        print(f"    Relative level: {reference.level}")
+        print()
+
+    if not sorted_imports:
+        print("No import references found.")
+
+    print("=" * 80)

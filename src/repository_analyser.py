@@ -4,16 +4,19 @@ from src.code_entities import CodeEntity, EntityType, SourceLocation
 from src.entity_ids import EntityIdAllocator
 from src.python_analyser import (
     extract_classes_and_methods,
+    extract_imports,
     extract_top_level_functions,
     parse_python_file,
 )
+from src.repository_analysis import RepositoryAnalysis
 from src.repository_scanner import discover_python_files
 
 
-def analyse_python_repository(root: Path) -> list[CodeEntity]:
+def analyse_python_repository(root: Path) -> RepositoryAnalysis:
     allocator = EntityIdAllocator()
     discovered_files = discover_python_files(root)
     entities = []
+    imports = []
     folder_ids: dict[Path, int] = {}  # Lookup for already stored folders
 
     # Parse files
@@ -39,8 +42,9 @@ def analyse_python_repository(root: Path) -> list[CodeEntity]:
         entities.extend(
             extract_classes_and_methods(tree, relative_path, file_entity.id, allocator)
         )
+        imports.extend(extract_imports(tree, relative_path, file_entity.id))
 
-    return entities
+    return RepositoryAnalysis(entities=entities, imports=imports)
 
 
 def _get_or_create_folder_id(
