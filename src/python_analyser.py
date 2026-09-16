@@ -8,11 +8,13 @@ from src.entity_ids import EntityIdAllocator
 from src.import_references import ImportReference
 
 
-def parse_python_file(root: Path, relative_path: Path) -> ast.Module:
+def parse_python_file(root: Path, relative_path: Path) -> tuple[ast.Module, int]:
     with tokenize.open(root / relative_path) as source_file:
         source = source_file.read()
+    tree = ast.parse(source, filename=relative_path.as_posix())
+    line_count = len(source.splitlines())
 
-    return ast.parse(source, filename=relative_path.as_posix())
+    return tree, line_count
 
 
 def extract_top_level_functions(

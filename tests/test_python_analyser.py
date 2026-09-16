@@ -21,12 +21,15 @@ class PythonAnalyserTests(unittest.TestCase):
             source_path = root / "temp.py"
             source_path.write_text("answer = 42\n", encoding="utf-8")
 
-            result = parse_python_file(root, Path("temp.py"))
+            result, line_count = parse_python_file(root, Path("temp.py"))
 
             # Parsing should return a module containing one top-level assignment.
             self.assertIsInstance(result, ast.Module)
             self.assertEqual(len(result.body), 1)
             self.assertIsInstance(result.body[0], ast.Assign)
+
+            # Each fixture contains one physical source line.
+            self.assertEqual(line_count, 1)
 
     def test_syntax_error_identifies_source_file(self):
         with TemporaryDirectory() as directory:
@@ -49,13 +52,16 @@ class PythonAnalyserTests(unittest.TestCase):
                 "raise RuntimeError('This source must not execute')", encoding="utf-8"
             )
 
-            result = parse_python_file(root, Path("temp.py"))
+            result, line_count = parse_python_file(root, Path("temp.py"))
 
             # The raise statement should be represented in the tree without being executed.
             self.assertEqual(len(result.body), 1)  # Check only contains one statement
             self.assertIsInstance(
                 result.body[0], ast.Raise
             )  # Contains raise node if only parsed
+
+            # Each fixture contains one physical source line.
+            self.assertEqual(line_count, 1)
 
     def test_extracts_top_level_function_entity(self):
         tree = ast.parse("def greet():\n   return 'hello'\n")
@@ -322,3 +328,22 @@ class PythonAnalyserTests(unittest.TestCase):
             ]
             self.assertEqual(len(unresolved), 1)
             self.assertEqual(unresolved[0].reference.module, "missing_dependency")
+
+    def test_counts_physical_source_lines(self):
+        cases = [
+            ("empty", "", 0),
+            ("no final newline", "value = 1", 1),
+            ("final newline", "value = 1\n", 1),
+            ("comments and blanks", "# Comment\n\nvalue = 1\n", 3),
+        ]
+
+        for label, source, expected in cases:
+            with self.subTest(case=label):
+                with TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "example.py").write_text(source, encoding="utf-8")
+
+                    _, line_count = parse_python_file(root, Path("example.py"))
+
+                    # Count physical lines, including comments and blank lines.
+                    self.assertEqual(line_count, expected)

@@ -251,6 +251,39 @@ class RepositoryAnalyserTests(unittest.TestCase):
             # connections, and circular groups in the same order.
             self.assertEqual(first, second)
 
+    def test_collects_metrics_for_every_file(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "empty.py").touch()
+            (root / "example.py").write_text(
+                "# Comment\n\nvalue = 1\n",
+                encoding="utf-8",
+            )
+
+            analysis = analyse_python_repository(root)
+            files = {
+                entity.location.path: entity
+                for entity in analysis.entities
+                if entity.entity_type == EntityType.FILE
+            }
+
+            # Every file should receive exactly one measurement record.
+            self.assertEqual(len(analysis.file_metrics), 2)
+            self.assertEqual(
+                {metric.file_id: metric.line_count for metric in analysis.file_metrics},
+                {
+                    files["empty.py"].id: 0,
+                    files["example.py"].id: 3,
+                },
+            )
+
+    def test_empty_repository_has_no_file_metrics(self):
+        with TemporaryDirectory() as directory:
+            analysis = analyse_python_repository(Path(directory))
+
+            # No files should produce an empty metrics list without errors.
+            self.assertEqual(analysis.file_metrics, [])
+
 
 if __name__ == "__main__":
     root = Path("C:/dev/repos/PythonTranslator")

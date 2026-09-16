@@ -3,6 +3,7 @@ from pathlib import Path
 from src.code_entities import CodeEntity, EntityType, SourceLocation
 from src.entity_ids import EntityIdAllocator
 from src.file_connections import build_file_connections
+from src.file_metrics import FileMetrics
 from src.import_cycles import find_import_cycles
 from src.import_references import ResolvedImport
 from src.import_resolver import build_module_index, resolve_import_target
@@ -21,6 +22,7 @@ def analyse_python_repository(root: Path) -> RepositoryAnalysis:
     discovered_files = discover_python_files(root)
     entities = []
     imports = []
+    file_metrics: list[FileMetrics] = []
     folder_ids: dict[Path, int] = {}  # Lookup for already stored folders
 
     # Parse files
@@ -39,7 +41,8 @@ def analyse_python_repository(root: Path) -> RepositoryAnalysis:
         entities.append(file_entity)
 
         # Parsing file for functions, classes and methods
-        tree = parse_python_file(root, relative_path)
+        tree, line_count = parse_python_file(root, relative_path)
+        file_metrics.append(FileMetrics(file_id=file_entity.id, line_count=line_count))
         entities.extend(
             extract_top_level_functions(tree, relative_path, file_entity.id, allocator)
         )
@@ -68,6 +71,7 @@ def analyse_python_repository(root: Path) -> RepositoryAnalysis:
         imports=resolved_imports,
         connections=connections,
         import_cycles=import_cycles,
+        file_metrics=file_metrics,
     )
 
 
