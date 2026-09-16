@@ -3,6 +3,7 @@ from pathlib import Path
 from src.code_entities import CodeEntity, EntityType, SourceLocation
 from src.entity_ids import EntityIdAllocator
 from src.file_connections import build_file_connections
+from src.import_cycles import find_import_cycles
 from src.import_references import ResolvedImport
 from src.import_resolver import build_module_index, resolve_import_target
 from src.python_analyser import (
@@ -60,9 +61,13 @@ def analyse_python_repository(root: Path) -> RepositoryAnalysis:
 
     # Import connections
     connections = build_file_connections(resolved_imports)
+    import_cycles = find_import_cycles(connections)
 
     return RepositoryAnalysis(
-        entities=entities, imports=resolved_imports, connections=connections
+        entities=entities,
+        imports=resolved_imports,
+        connections=connections,
+        import_cycles=import_cycles,
     )
 
 

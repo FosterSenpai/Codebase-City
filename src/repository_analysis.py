@@ -10,3 +10,4 @@ class RepositoryAnalysis:
     entities: list[CodeEntity]
     imports: list[ResolvedImport]
     connections: list[FileConnection]
+    import_cycles: list[list[int]]

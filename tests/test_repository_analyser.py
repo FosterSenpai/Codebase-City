@@ -201,18 +201,69 @@ class RepositoryAnalyserTests(unittest.TestCase):
                 SourceLocation("a.py", 2, 2),
             )
 
+    def test_reports_import_cycles_using_file_entity_ids(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.py").write_text("import b\n", encoding="utf-8")
+            (root / "b.py").write_text("import a\n", encoding="utf-8")
+            (root / "observer.py").write_text("import a\n", encoding="utf-8")
+
+            analysis = analyse_python_repository(root)
+            files = {
+                entity.location.path: entity
+                for entity in analysis.entities
+                if entity.entity_type == EntityType.FILE
+            }
+
+            # The mutually importing files should form one circular group.
+            self.assertEqual(
+                analysis.import_cycles,
+                [sorted([files["a.py"].id, files["b.py"].id])],
+            )
+
+            # A file importing into the cycle should not become part of it.
+            cycle_members = {
+                file_id for group in analysis.import_cycles for file_id in group
+            }
+            self.assertNotIn(files["observer.py"].id, cycle_members)
+
 
 if __name__ == "__main__":
     root = Path("C:/dev/repos/PythonTranslator")
     analysis = analyse_python_repository(root)
     entities = analysis.entities
+    entities_by_id = {entity.id: entity for entity in entities}
 
-    print("\n" + "=" * 80)
-    print("REPOSITORY ANALYSIS")
-    print("=" * 80)
-    print(f"Repository: {root}")
-    print(f"Entities:   {len(entities)}")
-    print(f"Imports:    {len(analysis.imports)}")
+    def print_heading(title):
+        print("\n" + "=" * 80)
+        print(title)
+        print("=" * 80)
+
+    def format_import(reference):
+        # Reconstruct one declaration from its recorded evidence.
+        if reference.imported_name is None:
+            declaration = f"import {reference.module}"
+        else:
+            module = "." * reference.level + (reference.module or "")
+            declaration = f"from {module} import {reference.imported_name}"
+
+        if reference.alias is not None:
+            declaration += f" as {reference.alias}"
+
+        return declaration
+
+    def connection_sort_key(connection):
+        return (
+            entities_by_id[connection.importer_file_id].location.path,
+            entities_by_id[connection.imported_file_id].location.path,
+        )
+
+    print_heading("REPOSITORY ANALYSIS")
+    print(f"Repository:   {root}")
+    print(f"Entities:     {len(entities)}")
+    print(f"Imports:      {len(analysis.imports)}")
+    print(f"Connections:  {len(analysis.connections)}")
+    print(f"Cycle groups: {len(analysis.import_cycles)}")
 
     # Summarize each supported entity category.
     print("\nEntity counts:")
@@ -256,19 +307,13 @@ if __name__ == "__main__":
 
             print_children(entity.id, depth + 1)
 
-    print("\n" + "=" * 80)
-    print("ENTITY HIERARCHY")
-    print("=" * 80)
-
+    print_heading("ENTITY HIERARCHY")
     print_children(None)
 
     if not entities:
         print("No supported Python files found.")
 
-    # Look up resolved destination files by entity ID.
-    entities_by_id = {entity.id: entity for entity in entities}
-
-    # Sort using the original reference stored inside each resolution result.
+    # Sort import results using their original source locations.
     sorted_imports = sorted(
         analysis.imports,
         key=lambda item: (
@@ -280,9 +325,7 @@ if __name__ == "__main__":
     resolved_count = sum(item.target_file_id is not None for item in sorted_imports)
     unresolved_count = len(sorted_imports) - resolved_count
 
-    print("\n" + "=" * 80)
-    print("IMPORT RESOLUTION")
-    print("=" * 80)
+    print_heading("IMPORT RESOLUTION")
     print(f"Resolved:   {resolved_count}")
     print(f"Unresolved: {unresolved_count}")
 
@@ -298,20 +341,10 @@ if __name__ == "__main__":
             print(f"  Entity ID: {current_file_id}")
             print("-" * 80)
 
-        # Reconstruct a readable declaration for this reference.
-        if reference.imported_name is None:
-            declaration = f"import {reference.module}"
-        else:
-            module = "." * reference.level + (reference.module or "")
-            declaration = f"from {module} import {reference.imported_name}"
-
-        if reference.alias is not None:
-            declaration += f" as {reference.alias}"
-
         status = "RESOLVED" if item.target_file_id is not None else "UNRESOLVED"
-        print(f"  [{status}] {declaration}")
+        print(f"  [{status}] {format_import(reference)}")
 
-        # Show the matched destination without labelling unmatched imports external.
+        # Unresolved does not necessarily mean external.
         if item.target_file_id is not None:
             target = entities_by_id[item.target_file_id]
             print(f"    Target file:    {target.location.path}")
@@ -319,7 +352,6 @@ if __name__ == "__main__":
         else:
             print("    Target file:    No unambiguous local match")
 
-        # Preserve the source evidence alongside the resolution result.
         print(
             f"    Source lines:   {reference.location.start_line}"
             f"–{reference.location.end_line}"
@@ -333,4 +365,60 @@ if __name__ == "__main__":
     if not sorted_imports:
         print("No import references found.")
 
-    print("=" * 80)
+    sorted_connections = sorted(
+        analysis.connections,
+        key=connection_sort_key,
+    )
+
+    print_heading("FILE CONNECTIONS — IMPORTER -> IMPORTED FILE")
+    print("Arrows below mean 'imports'; city roads will use the opposite direction.")
+
+    for connection in sorted_connections:
+        importer = entities_by_id[connection.importer_file_id]
+        imported = entities_by_id[connection.imported_file_id]
+
+        print(f"\n{importer.location.path} -> {imported.location.path}")
+        print(f"  File IDs: {importer.id} -> {imported.id}")
+        print(f"  Supporting references: {len(connection.references)}")
+
+        # Preserve every declaration supporting this connection.
+        for reference in connection.references:
+            print(
+                f"    Lines {reference.location.start_line}"
+                f"–{reference.location.end_line}: "
+                f"{format_import(reference)}"
+            )
+
+    if not sorted_connections:
+        print("No resolved file connections found.")
+
+    print_heading("CIRCULAR IMPORT GROUPS")
+
+    for number, group in enumerate(analysis.import_cycles, start=1):
+        member_ids = set(group)
+        print(f"\nGroup {number}: {len(group)} file(s)")
+
+        # Group members are mutually reachable, not necessarily a direct cycle route.
+        for file_id in sorted(
+            group,
+            key=lambda item: entities_by_id[item].location.path,
+        ):
+            entity = entities_by_id[file_id]
+            print(f"  [ID {file_id}] {entity.location.path}")
+
+        print("  Connections within this group:")
+
+        # Print actual connections between the group's members.
+        for connection in sorted_connections:
+            if (
+                connection.importer_file_id in member_ids
+                and connection.imported_file_id in member_ids
+            ):
+                importer = entities_by_id[connection.importer_file_id]
+                imported = entities_by_id[connection.imported_file_id]
+                print(f"    {importer.location.path} -> {imported.location.path}")
+
+    if not analysis.import_cycles:
+        print("No circular import groups found in the resolved connections.")
+
+    print("\n" + "=" * 80)
