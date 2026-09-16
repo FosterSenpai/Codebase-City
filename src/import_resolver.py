@@ -36,35 +36,59 @@ def build_module_index(entities: list[CodeEntity]) -> dict[str, int]:
 def resolve_import_target(
     reference: ImportReference, module_index: dict[str, int]
 ) -> int | None:
+    # Convert relative module names to absolute names
+    module_name = _absolute_import_module(reference)
+    if module_name is None:
+        return None
 
-    # Handling ordinary import
-    if (
-        reference.imported_name is None
-        and reference.level == 0
-        and reference.module is not None
-    ):
-        return module_index.get(reference.module)
-    elif (
-        reference.imported_name is not None
-        and reference.level == 0
-        and reference.module is not None
-    ):
-        # Wildcard imprt
+    # Ordinary imports target the exact module name.
+    if reference.imported_name is None and reference.level == 0:
+        return module_index.get(module_name)
+
+    # Handle both absolute and relative from-imports.
+    elif reference.imported_name is not None:
+        # Wildcard imports target the module itself.
         if reference.imported_name == "*":
-            return module_index.get(reference.module)
+            return module_index.get(module_name)
 
-        module_target = reference.module
-        submodule_target = reference.module + "." + reference.imported_name
-        module_id = module_index.get(module_target)
-        submodule_id = module_index.get(submodule_target)
+        module_id = module_index.get(module_name)
+        submodule_name = module_name + "." + reference.imported_name
+        submodule_id = module_index.get(submodule_name)
 
-        # Both exist, more evidence needed to choose target
+        # Both candidates exist; more evidence is needed to choose.
         if module_id is not None and submodule_id is not None:
             return None
 
-        # Return whichever exists or None if neither exist
+        # Return the submodule when it is the only matching candidate.
         if submodule_id is not None:
             return submodule_id
+
+        # Return the module candidate, or None if neither exists.
         return module_id
 
     return None
+
+
+def _absolute_import_module(reference: ImportReference) -> str | None:
+    # Absolute imports already module name
+    if reference.level == 0:
+        return reference.module
+
+    # Source files parent dirs form package path
+    package_parts = PurePosixPath(reference.location.path).parent.parts
+
+    # relative imports leave at least one package component
+    if reference.level > len(package_parts):
+        return None
+
+    # Calculating how much of package to keep
+    keep_count = len(package_parts) - (reference.level - 1)
+    base_parts = package_parts[:keep_count]
+
+    base_module = ".".join(base_parts)
+
+    # Add named module to containing package
+    if reference.module is not None:
+        return f"{base_module}.{reference.module}"
+
+    return base_module

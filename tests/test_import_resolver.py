@@ -190,3 +190,103 @@ class ModuleIndexTests(unittest.TestCase):
 
         # A fabricated submodule named "*" must not be considered a target.
         self.assertIsNone(resolve_import_target(reference, {"package.*": 8}))
+
+    def test_resolves_relative_imports_from_containing_package(self):
+        cases = [
+            (
+                "current package",
+                "package/services/worker.py",
+                "helpers",
+                "clean",
+                1,
+                "package.services.helpers",
+            ),
+            (
+                "parent package",
+                "package/services/worker.py",
+                "shared",
+                "settings",
+                2,
+                "package.shared",
+            ),
+            (
+                "unnamed module",
+                "package/services/worker.py",
+                None,
+                "helpers",
+                1,
+                "package.services.helpers",
+            ),
+            (
+                "package initializer",
+                "package/services/__init__.py",
+                "helpers",
+                "clean",
+                1,
+                "package.services.helpers",
+            ),
+            (
+                "wildcard",
+                "package/services/worker.py",
+                "helpers",
+                "*",
+                1,
+                "package.services.helpers",
+            ),
+        ]
+
+        for label, path, module, name, level, target in cases:
+            with self.subTest(case=label):
+                reference = ImportReference(
+                    source_file_id=1,
+                    module=module,
+                    imported_name=name,
+                    alias=None,
+                    level=level,
+                    location=SourceLocation(path, 1, 1),
+                )
+
+                # Resolve relative imports using the source file's package context.
+                self.assertEqual(
+                    resolve_import_target(reference, {target: 7}),
+                    7,
+                )
+
+    def test_relative_imports_cannot_escape_package_hierarchy(self):
+        cases = [
+            ("root file", "main.py", 1),
+            ("beyond top package", "package/worker.py", 2),
+            ("beyond nested package", "package/services/worker.py", 3),
+        ]
+
+        for label, path, level in cases:
+            with self.subTest(case=label):
+                reference = ImportReference(
+                    source_file_id=1,
+                    module="helpers",
+                    imported_name="clean",
+                    alias=None,
+                    level=level,
+                    location=SourceLocation(path, 1, 1),
+                )
+
+                # Invalid relative levels must not fall back to an absolute module.
+                self.assertIsNone(resolve_import_target(reference, {"helpers": 7}))
+
+    def test_relative_import_with_two_candidates_remains_unresolved(self):
+        reference = ImportReference(
+            source_file_id=1,
+            module=None,
+            imported_name="helpers",
+            alias=None,
+            level=1,
+            location=SourceLocation("package/worker.py", 1, 1),
+        )
+
+        # Preserve the ambiguity rule after converting a relative module name.
+        self.assertIsNone(
+            resolve_import_target(
+                reference,
+                {"package": 7, "package.helpers": 8},
+            )
+        )
