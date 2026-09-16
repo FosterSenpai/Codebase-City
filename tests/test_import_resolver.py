@@ -1,7 +1,8 @@
 import unittest
 
 from src.code_entities import CodeEntity, EntityType, SourceLocation
-from src.import_resolver import build_module_index
+from src.import_references import ImportReference
+from src.import_resolver import build_module_index, resolve_import_target
 
 
 class ModuleIndexTests(unittest.TestCase):
@@ -96,3 +97,54 @@ class ModuleIndexTests(unittest.TestCase):
     def test_empty_entities_produce_empty_index(self):
         # An empty repository should produce an empty lookup.
         self.assertEqual(build_module_index([]), {})
+
+    def test_resolves_exact_module_with_or_without_alias(self):
+        for alias in (None, "helpers"):
+            with self.subTest(alias=alias):
+                reference = ImportReference(
+                    source_file_id=1,
+                    module="package.helpers",
+                    imported_name=None,
+                    alias=alias,
+                    level=0,
+                    location=SourceLocation("main.py", 1, 1),
+                )
+
+                result = resolve_import_target(reference, {"package.helpers": 7})
+
+                # Aliases should not change the destination module's file ID.
+                self.assertEqual(result, 7)
+
+    def test_unmatched_module_does_not_fall_back_to_parent(self):
+        reference = ImportReference(
+            source_file_id=1,
+            module="package.missing",
+            imported_name=None,
+            alias=None,
+            level=0,
+            location=SourceLocation("main.py", 1, 1),
+        )
+
+        # A matching parent package is not a match for the requested module.
+        self.assertIsNone(resolve_import_target(reference, {"package": 7}))
+
+    def test_unsupported_import_forms_remain_unresolved(self):
+        cases = [
+            ("package", "helpers", 0),
+            ("package", None, 1),
+            (None, None, 0),
+        ]
+
+        for module, imported_name, level in cases:
+            with self.subTest(module=module, imported_name=imported_name, level=level):
+                reference = ImportReference(
+                    source_file_id=1,
+                    module=module,
+                    imported_name=imported_name,
+                    alias=None,
+                    level=level,
+                    location=SourceLocation("main.py", 1, 1),
+                )
+
+                # Forms outside the current resolver's scope return None.
+                self.assertIsNone(resolve_import_target(reference, {"package": 7}))

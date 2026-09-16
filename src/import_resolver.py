@@ -1,6 +1,7 @@
 from pathlib import PurePosixPath
 
 from src.code_entities import CodeEntity, EntityType
+from src.import_references import ImportReference
 
 
 def build_module_index(entities: list[CodeEntity]) -> dict[str, int]:
@@ -30,3 +31,18 @@ def build_module_index(entities: list[CodeEntity]) -> dict[str, int]:
             module_lookup[module_name] = entity.id
 
     return module_lookup
+
+
+def resolve_import_target(
+    reference: ImportReference, module_index: dict[str, int]
+) -> int | None:
+
+    # Handling ordinary import
+    if (
+        reference.imported_name is None
+        and reference.level == 0
+        and reference.module is not None
+    ):
+        return module_index.get(reference.module)
+
+    return None
